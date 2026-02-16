@@ -13,7 +13,7 @@
 Guests want a simple way to book reservations directly from the merchant website without leaving the page. The current process involves redirecting to our reservation site (`lightspeed.app/reservation/{merchant-id}`), which creates several problems:
 
 - **High drop-off rates**: Users abandon the booking flow when redirected to external sites
-- **Fragmented user experience**: Breaking the merchant's website flow reduces conversion
+- **Fragmented user experience**: Breaking the merchant's website flow reduces conversion. It also increse time for booking flow
 - **Competitive disadvantage**: Competitors like OpenTable, Resy, and SevenRooms offer embeddable widgets
 
 Merchants are currently using third-party reservation widgets because we don't provide an embeddable solution. This proposal aims to provide an embeddable widget that keeps users on the merchant's website throughout the entire booking flow.
@@ -40,7 +40,7 @@ Based on analysis of competitor solutions (OpenTable, Resy, SevenRooms, TheFork)
 
 ### Widget Delivery
 
-**Chosen Approach: Iframe with New Widget-Specific Page**
+**Chosen Approach: Embedded Widget via Loader Script (Iframe-based)**
 
 The widget will be delivered in two parts:
 
@@ -49,65 +49,91 @@ The widget will be delivered in two parts:
 
 **Implementation:**
 
-Merchants will add a single script tag to their website:
+Merchants will add a single async script tag to their website:
 
 ```html
-<script src="https://reservations.lightspeedhq.com/widget-loader.js?venueId=123&theme=dark"></script>
+<script async src="https://reservations.lightspeedhq.com/widget-loader.js" data-venue-id="123"></script>
 ```
 
 The loader script will:
 
-1. Read configuration from URL parameters and/or `window.lsk_reservation` object
-2. Create an iframe pointing to `https://reservations.lightspeedhq.com/reservation/{venue-id}/widget`
-3. Inject the iframe into the merchant's page
-4. Handle iframe resizing and communication via postMessage API
+1. Create an iframe pointing to `https://reservations.lightspeedhq.com/reservation/{venue-id}/widget`
+2. Inject the iframe into the merchant's page
+3. Provides an API for interacting with the iframe via postMessage. For example, customization elements or subscription to events inside the iframe.
+
+With the async/defer property, we would not interrupt the customer's website, as some of them care about website performance.
+
+Using `data-*` attributes on the script tag will help with caching (instead of using query params).
 
 **Why Iframe Approach:**
 
 - **Security**: Better isolation between merchant site and widget (no XSS risks)
 - **Faster Development**: Reuses existing reservation infrastructure
-- **Easier Maintenance**: Widget updates don't require merchant code changes
+- **Easier Maintenance**: Widget updates don't require merchant code changes, we release changes for reservation guest website and for widget at the same time
 - **Proven Pattern**: Used successfully by competitors (OpenTable, TheFork, Zenchef)
+- **Easy to install**: Merchant only need to add single line of code on their website
 
 ### System Architecture
 
 ```mermaid
-graph TB
-    subgraph "Merchant Website"
-        MerchantPage[Merchant Web Page]
-        LoaderScript[Widget Loader Script]
-        WidgetIframe[Widget Iframe]
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant B as Browser
+    participant M as Merchant Web Page
+    participant L as Widget Loader Script
+    participant CDN as CDN (CloudFront + S3)
+    participant I as Widget Iframe (embedded)
+    participant W as Reservation Website / Widget Page
+    participant API as lsk-reservation-service API
+
+    U->>B: Opens merchant page URL
+    B->>M: GET Merchant Web Page
+    M-->>B: HTML + <script src="...loader.js">
+
+    B->>CDN: GET loader.js
+    CDN-->>B: loader.js
+    B->>L: Execute loader.js (on merchant page)
+
+    L->>L: Read init params (data-*, window config)
+    L->>M: Create container DOM node (div)
+    L->>M: Inject <iframe src="...widget-host/page?...">
+
+    Note over M,I: Iframe runs in isolated origin/context
+    B->>I: Load iframe document
+
+    I->>W: GET Widget Page (HTML/JS)
+    W-->>I: Widget app bundle + initial HTML
+
+    %% Step 1 — addon validation (internal)
+    I->>API: Initial request (check addon status)
+    API-->>I: Addon status (active / inactive)
+
+    alt Addon is inactive
+        API-->>I: Error response (addon not active)
+        I-->>L: postMessage: "ERROR_ADDON_INACTIVE"
+        Note over I,U: Widget initialization stops
+    else Addon is active
+        API-->>I: OK (addon active)
+
+        %% Step 2 — fetch config from same service
+        I->>API: Fetch widget config
+        API-->>I: Config JSON
+
+        %% Step 3 — business calls
+        I->>API: API calls (availability, create reservation, etc.)
+        API-->>I: API responses (slots/confirmation/errors)
     end
 
-    subgraph "Lightspeed Infrastructure"
-        CDN[CDN<br/>CloudFront + S3]
-        ReservationWeb[Reservation Website<br/>Widget Page]
-        ReservationAPI[lsk-reservation-service<br/>API]
-        Backoffice[Backoffice<br/>Configuration]
-    end
+    I-->>L: postMessage: "READY"
+    L-->>I: postMessage: init/update (context)
 
-    subgraph "Guest"
-        User[Guest/Customer]
-    end
-
-    User -->|1. Visits| MerchantPage
-    MerchantPage -->|2. Loads| LoaderScript
-    LoaderScript -->|3. Fetches from| CDN
-    LoaderScript -->|4. Creates & injects| WidgetIframe
-    WidgetIframe -->|5. Loads content from| ReservationWeb
-    ReservationWeb -->|6. Fetches config| Backoffice
-    ReservationWeb -->|7. API calls| ReservationAPI
-    ReservationAPI -->|8. Email notification| User
-
-    style CDN fill:#e1f5ff
-    style ReservationAPI fill:#fff4e1
-    style Backoffice fill:#f0f0f0
-    style WidgetIframe fill:#e8f5e9
+    Note over U,I: User interacts with widget inside iframe
 ```
 
 ### Configuration
 
-**Chosen Approach: Hybrid Configuration (Backend Defaults + URL Overrides)**
+**Chosen Approach: Hybrid Configuration (Backend Defaults + `data-*` attributes overrides)**
 
 Configuration follows a layered approach:
 
@@ -117,10 +143,8 @@ Configuration follows a layered approach:
    - Default party size options
    - Custom messaging and terms
 
-2. **URL Parameters (Optional Overrides)**: Merchants can override specific settings per page
+2. **`data-*` attributes**: Merchants can override specific settings per page
    - `venueId` (required): Identifies the merchant venue
-   - `theme` (optional): Override theme ('light', 'dark', 'auto')
-   - `initialState` (optional): Widget display state ('minimized', 'open')
    - `other`
 
 **Examples:**
@@ -128,20 +152,14 @@ Configuration follows a layered approach:
 Basic integration (all settings from backend):
 
 ```html
-<script src="https://reservations.lightspeedhq.com/widget-loader.js?venueId=123"></script>
-```
-
-With URL overrides:
-
-```html
-<script src="https://reservations.lightspeedhq.com/widget-loader.js?venueId=123&theme=dark&initialState=open"></script>
+<script src="https://reservations.lightspeedhq.com/widget-loader.js" data-venue-id="123"></script>
 ```
 
 Advanced: Using JavaScript object for complex configuration:
 
 ```html
 <script>
-  window.lsk_reservation = {
+  window.lsk_reservations_widget = {
     venueId: 123,
     theme: "dark",
     initialState: "open",
@@ -164,7 +182,7 @@ Advanced: Using JavaScript object for complex configuration:
 ```mermaid
 flowchart TD
     Start([Widget loads]) --> ParseURL[Parse URL parameters]
-    ParseURL --> CheckWindow{window.lsk_reservation<br/>exists?}
+    ParseURL --> CheckWindow{window.lsk_reservations_widget<br/>exists?}
 
     CheckWindow -->|Yes| MergeWindow[Merge window config]
     CheckWindow -->|No| FetchBackend[Fetch Backoffice config]
@@ -190,7 +208,7 @@ flowchart TD
 **Configuration Priority (Highest to Lowest):**
 
 1. **URL Parameters** - Overrides everything (e.g., `?theme=dark`)
-2. **JavaScript Window Object** - Custom configuration via `window.lsk_reservation`
+2. **JavaScript Window Object** - Custom configuration via `window.lsk_reservations_widget`
 3. **Backoffice Settings** - Default configuration set by merchant
 4. **System Defaults** - Fallback if nothing specified
 
@@ -202,14 +220,13 @@ The reservation widget is only available to merchants who have purchased the res
 
 - **License Verification**: Widget loader checks if merchant has active reservation addon
 - **Backend Validation**: `lsk-reservation-service` validates addon status via `activation-manager`
-- **Graceful Degradation**: If addon not active, widget shows upgrade message with link to purchase
 
 **License Check Flow:**
 
 1. Widget page loads with `venueId` parameter
 2. Backend checks addon status for business location
 3. If addon active → Load widget normally
-4. If addon inactive or expired → Display warning message
+4. If addon inactive or expired → TBD
 
 ### Security
 
@@ -227,14 +244,6 @@ To prevent unauthorized widget usage on non-merchant domains:
 - **Detection**: Loader script includes fallback detection to display message if blocked
 - **Graceful Degradation**: If widget fails to load, show direct link to reservation page
 
-**Data Security**
-
-- **PII Handling**: Widget handles guest personal information (name, email, phone)
-- **HTTPS Only**: All widget traffic over encrypted connections
-- **CORS Policy**: Strict CORS headers prevent unauthorized API access
-- **No Sensitive Data in URL**: Guest information sent via secure POST requests, never URL parameters
-- **Session Management**: Short-lived session tokens for booking flow
-
 ### Analytics
 
 **Widget Usage Tracking**
@@ -250,26 +259,6 @@ const isEmbedded = window.self !== window.top;
 // Send analytics event with context
 ```
 
-2. **Server-Side Tracking**: Backend analyzes HTTP `Referer` header
-   - Widget embedded: Referer = merchant domain
-   - Direct access: Referer = lightspeed domain or empty
-
-**Metrics to Track:**
-
-- **Widget Loads**: Number of times widget is loaded on merchant sites
-- **Conversion Rate**: Bookings completed via widget vs. abandoned
-- **Time to Book**: Duration from widget open to booking completion
-- **Error Rate**: Failed bookings and reasons
-- **Device Distribution**: Desktop vs. mobile usage
-- **Merchant Adoption**: Number of merchants installing widget
-- **Domain Distribution**: Which merchant domains use the widget most
-
-**Integration:**
-
-- Events sent to existing analytics infrastructure (e.g., Amplitude, Mixpanel)
-- Dashboards created for product team to monitor performance
-- A/B testing capability for widget variations
-
 ## Dependencies
 
 **Internal Systems:**
@@ -283,7 +272,6 @@ const isEmbedded = window.self !== window.top;
   - Validates if merchant has active reservation addon
   - Returns addon status (active/inactive/expired)
   - Widget checks addon status before loading booking functionality
-  - Addon status cached for 1 hour to minimize load
 
 - **Reservation Website**: Widget-specific pages served from existing reservation frontend
   - New route: `/reservation/{venue-id}/widget`
@@ -306,20 +294,6 @@ const isEmbedded = window.self !== window.top;
 - None directly, but widget operates within merchant websites (external to our infrastructure)
 
 ## Alternatives Considered / Prior Art
-
-### Current Solution: Direct Links
-
-**Current Approach:**
-
-- Merchants link to `lightspeed.app/reservation/{venue-id}`
-- Users leave merchant website to complete booking
-- High drop-off rates due to context switching
-
-**Why Not Sufficient:**
-
-- Breaks user flow and trust
-- No customization or branding control
-- Competitors offer better embedded experiences
 
 ### Alternative 1: Direct Widget Injection (No Iframe)
 
@@ -360,25 +334,6 @@ Iframe points to current reservation page (`/reservation/{venue-id}/reservation`
 - **Mobile Experience**: Not optimized for small embedded contexts
 
 **Decision:** Rejected - minimal effort but poor user experience.
-
-### Alternative 3: Third-Party Widget Solutions
-
-**Description:**
-Continue relying on OpenTable, Resy, or other third-party reservation widgets.
-
-**Pros:**
-
-- No development required
-- Proven solutions
-
-**Cons:**
-
-- **Lost Revenue**: Merchants pay competitors instead of us
-- **Data Loss**: Reservation data lives in competitor systems
-- **No Integration**: Can't integrate with our POS or other products
-- **Limited Control**: Can't customize or improve widget
-
-**Decision:** This is the problem we're solving, not a viable alternative.
 
 ### Chosen Solution: Iframe with New Widget-Specific Page
 
