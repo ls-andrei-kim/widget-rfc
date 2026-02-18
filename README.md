@@ -154,7 +154,7 @@ Configuration follows a layered approach:
    - Custom messaging and terms
 
 2. **`data-*` attributes**: Merchants can override specific settings per page
-   - `venueId` (required): Identifies the merchant venue
+   - `merchantId` (required): Identifies the merchant venue
    - `lang` (optional): Default language for widget
    - `other`
 
@@ -163,7 +163,7 @@ Configuration follows a layered approach:
 Basic integration (all settings from backend):
 
 ```html
-<script async src="https://reservations.lightspeedhq.com/widget-loader.js" data-venue-id="123" data-lang="fr"></script>
+<script async src="https://reservations.lightspeedhq.com/widget-loader.js" data-merchantId="123" data-lang="fr"></script>
 ```
 
 Advanced: Using JavaScript object for complex configuration:
@@ -171,7 +171,7 @@ Advanced: Using JavaScript object for complex configuration:
 ```html
 <script>
   window.lsk_reservations_widget = {
-    venueId: 123,
+    merchantId: 123,
     lang: "fr",
   };
 </script>
@@ -185,28 +185,6 @@ Advanced: Using JavaScript object for complex configuration:
 - **Best of both worlds**: Combines simplicity of backend config with power of `data-*` attributes.
 
 ### Configuration Resolution Flow
-
-```mermaid
-flowchart TD
-    Start([Widget loads]) --> ParseData[Parse data attributes]
-    ParseData --> CheckWindow{window.lsk_reservations_widget<br/>exists?}
-
-    CheckWindow -->|Yes| MergeWindow[Merge window config]
-    CheckWindow -->|No| FetchBackend[Fetch Backoffice config]
-    MergeWindow --> FetchBackend
-
-    FetchBackend --> BackendConfig[Backend Configuration:<br/>- Business hours<br/>- Booking rules<br/>- Default settings]
-
-    BackendConfig --> ApplyDefaults[Apply backend defaults]
-    ApplyDefaults --> UseFinal[Final configuration]
-
-    UseFinal --> InitWidget[Initialize widget with config]
-    InitWidget --> End([Widget ready])
-
-    style BackendConfig fill:#e3f2fd
-    style Override fill:#fff9c4
-    style UseFinal fill:#c8e6c9
-```
 
 **Configuration Priority (Highest to Lowest):**
 
@@ -271,7 +249,7 @@ We will treat the **Loader Script** and the **Widget** as separate deployable ar
 **Artifacts**
 
 1.  **Widget**
-    *   **Type**: Next.js Page (Route: `/reservation/[venueId]/widget`)
+    *   **Type**: Next.js Page (Route: `/reservation/[merchantId]/widget`)
     *   **Deployment**: Standard containerized deployment to EKS (same as existing Reservation App).
     *   **Versioning**: Tied to the main reservation app release cycle.
 
@@ -321,20 +299,19 @@ We will treat the **Loader Script** and the **Widget** as separate deployable ar
 ### Alternative 1: Direct Widget Injection (No Iframe)
 
 **Description:**
-Loader script downloads widget JavaScript and injects directly into the merchant page (similar to chat widgets like Intercom).
+Loader script downloads widget JavaScript and add web component widget directly into the merchant page.
 
 **Pros:**
 
 - More flexible UI integration
-- Better performance (no iframe overhead)
+- Better performance (often smaller size that leads to faster download)
 - Easier communication with merchant page
 
 **Cons:**
 
-- **Security Risk**: Widget JavaScript runs in merchant domain (XSS vulnerabilities)
-- **CSS Conflicts**: Merchant styles can break widget appearance
+- **Security Risk**: Widget JavaScript runs in merchant domain
 - **Complex Isolation**: Requires Shadow DOM or strict CSS namespacing
-- **Longer Development Time**: Need robust isolation mechanisms
+- **Isolation Concerns**: Need robust isolation mechanisms
 - **Other**: There are other potential risks because we don't control the environment of the merchant's website
 
 **Decision:** Rejected due to security and complexity concerns.
@@ -413,7 +390,7 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 
 **Mitigation:**
 
-- Use generic, non-tracking-like file names (e.g. `widget-loader.js`)
+- Use generic, non-tracking-like file names (e.g. `widget-loader.js`, see more examples on [easylist](https://github.com/easylist/easylist). It is used in a number of extensions and browsers such as Adblock Plus, uBlock Origin, AdBlock, AdGuard, Brave, Opera, and Vivaldi) 
 - Detection script displays message (e.g. "Please disable ad blocker to book reservation")
 - Fallback to direct reservation link
 - Monitor blocked load rate in analytics
