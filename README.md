@@ -43,7 +43,7 @@ Based on analysis of competitor solutions (OpenTable, Resy, SevenRooms, TheFork)
 
 The widget will be delivered in two parts:
 
-1. **Loader Script**: A lightweight JavaScript file hosted on our CDN (S3 + CloudFront)
+1. **Loader Script**: A lightweight JavaScript file that hosted in public folder of reservation application (e.g. https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js)
 2. **Widget Application**: An iframe pointing to a new, widget-specific page
 
 **Implementation:**
@@ -51,12 +51,12 @@ The widget will be delivered in two parts:
 Merchants will add a single async script tag to their website:
 
 ```html
-<script async src="https://reservations.lightspeedhq.com/widget-loader.js" data-venue-id="123"></script>
+<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-venue-id="123"></script>
 ```
 
 The loader script will:
 
-1. Create an iframe pointing to `https://reservations.lightspeedhq.com/reservation/{venue-id}/widget`
+1. Create an iframe pointing to `https://order-ahead.sbx.lsk.lightspeed.app/reservation/{venue-id}/widget`
 2. Inject the iframe into the merchant's page
 3. Exposes an API for interacting with the iframe via postMessage. For example, customization elements or subscription to events inside the iframe (e.g. open/close widget state).
 
@@ -93,18 +93,17 @@ sequenceDiagram
     participant B as Browser
     participant M as Merchant Web Page
     participant L as Widget Loader Script
-    participant CDN as CDN (CloudFront + S3)
     participant I as Widget Iframe (embedded)
     participant W as Reservation Website / Widget Page
     participant API as lsk-reservation-service API
 
     U->>B: Opens merchant page URL
     B->>M: GET Merchant Web Page
-    M-->>B: HTML + <script src="...loader.js">
+    M-->>B: HTML + <script src="...widget-loader.js">
 
-    B->>CDN: GET loader.js
-    CDN-->>B: loader.js
-    B->>L: Execute loader.js (on merchant page)
+    B->>W: GET widget-loader.js
+    W-->>B: widget-loader.js
+    B->>L: Execute widget-loader.js (on merchant page)
 
     L->>L: Read init params (data-*, window config)
     L->>M: Inject <iframe src="...widget-host/page?...">
@@ -163,7 +162,7 @@ Configuration follows a layered approach:
 Basic integration (all settings from backend):
 
 ```html
-<script async src="https://reservations.lightspeedhq.com/widget-loader.js" data-merchantId="123" data-lang="fr"></script>
+<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchantId="123" data-lang="fr"></script>
 ```
 
 Advanced: Using JavaScript object for complex configuration:
@@ -175,7 +174,7 @@ Advanced: Using JavaScript object for complex configuration:
     lang: "fr",
   };
 </script>
-<script async src="https://reservations.lightspeedhq.com/widget-loader.js"></script>
+<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js"></script>
 ```
 
 **Why Hybrid Approach:**
@@ -244,38 +243,19 @@ Enhance existing [reservation-mock](https://github.com/lightspeed-hospitality/re
 
 ### Deployment
 
-We will treat the **Loader Script** and the **Widget** as separate deployable artifacts with distinct lifecycles.
-
 **Artifacts**
 
-1.  **Widget**
-    *   **Type**: Next.js Page (Route: `/reservation/[merchantId]/widget`)
-    *   **Deployment**: Standard containerized deployment to EKS (same as existing Reservation App).
-    *   **Versioning**: Tied to the main reservation app release cycle.
-
-2.  **Loader Script**
-    *   **Type**: Static JavaScript file
-    *   **Deployment**: Uploaded to S3 bucket behind CloudFront CDN.
-    *   **Caching**: `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` (1 hour cache, serve stale for 24h on error).
+**Next.js Application** (includes both loader script and widget pages)
+   - Loader script: `/public/widget-loader.js` (with caching configuration `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` (1 hour cache, serve stale for 24h on error))
+   - Widget page: `/reservation/[venueId]/widget`
 
 **CI/CD Pipeline**
 
-1.  **Build & Test**:
-    *   Run unit tests (Jest) and linting.
-    *   Build a loader script.
-    *   Build Next.js app.
-2.  **Staging Deployment**:
-    *   Deploy artifacts to the staging environment.
-    *   Run E2E tests.
-3.  **Production Release**:
-    *   **Step 1**: Deploy Next.js App.
-    *   **Step 2**: Upload loader script to S3 Production bucket.
-    *   **Step 3**: Invalidate CloudFront cache when loader script logic changes (breaking changes only). For non-breaking updates, rely on TTL expiration.
+Nothing should change
 
 **Rollback Strategy**
 
-*   **Widget App**: Standard Kubernetes rollback via ArgoCD (revert to previous image).
-*   **Loader Script**: Re-upload previous version of loader script to S3.
+Standard Kubernetes rollback via ArgoCD (revert to previous image)
 
 
 ## Dependencies
@@ -285,8 +265,6 @@ We will treat the **Loader Script** and the **Widget** as separate deployable ar
 - **lsk-reservation-service** ([RFC 0070](https://github.com/lightspeed-hospitality/tech-docs/blob/main/docs/Decision-Records/RFC/0070-lsk-reservation-service.md)): Primary backend for availability checks and booking creation
 
 - **hospitality-consumer-facing/lsk-reservation-client**: Widget-specific pages served from existing reservation frontend
-
-- **CDN (CloudFront + S3)**: Hosts loader script and static assets
 
 - **hospitality-platform**: Configuration interface for merchants
 
@@ -348,7 +326,6 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 
 **Operational Impact on Other Teams:**
 
-- **Infrastructure Team**: Initial CDN setup and monitoring (one-time)
 - **Security Team**: Review before launch (one-time), periodic security audits
 - **Customer Support**: Trained on widget installation troubleshooting
 - **Marketing and Sales Team**: Create merchant communication materials
@@ -366,7 +343,6 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 
 **Mitigation:**
 
-- Use global CDN (CloudFront) for widget assets
 - Lazy-load widget iframe
 - Async script loading (non-blocking)
 - Performance: Widget small as possible, load time fast as possible even on 3G
