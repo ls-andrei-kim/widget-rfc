@@ -35,7 +35,7 @@ Based on analysis of competitor solutions (OpenTable, Resy, SevenRooms, TheFork)
 
 - **Delivery Method**: loader script, that injects an iframe pointing to a new, widget-specific page
 - **Configuration**: Hybrid approach (backoffice defaults + `data-*` attributes overrides)
-- **Browser Support**: See 'Browser and Device Compatibility' in Risks section
+- **Browser Support**: See [Browser and Device Compatibility](#risks-browser-compatibility) in Risks section
 
 ### Widget Delivery
 
@@ -51,12 +51,12 @@ The widget will be delivered in two parts:
 Merchants will add a single async script tag to their website:
 
 ```html
-<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-venue-id="123"></script>
+<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchant-id="123"></script>
 ```
 
 The loader script will:
 
-1. Create an iframe pointing to `https://order-ahead.sbx.lsk.lightspeed.app/reservation/{venue-id}/widget`
+1. Create an iframe pointing to `https://order-ahead.sbx.lsk.lightspeed.app/reservation/{merchant-id}/widget`
 2. Inject the iframe into the merchant's page
 3. Exposes an API for interacting with the iframe via postMessage. For example, customization elements or subscription to events inside the iframe (e.g. open/close widget state).
 
@@ -153,7 +153,7 @@ Configuration follows a layered approach:
    - Custom messaging and terms
 
 2. **`data-*` attributes**: Merchants can override specific settings per page
-   - `merchantId` (required): Identifies the merchant venue
+   - `merchant-id` (required): Identifies the merchant merchant
    - `lang` (optional): Default language for widget
    - `other`
 
@@ -162,7 +162,7 @@ Configuration follows a layered approach:
 Basic integration (all settings from backend):
 
 ```html
-<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchantId="123" data-lang="fr"></script>
+<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchant-id="123" data-lang="fr"></script>
 ```
 
 Advanced: Using JavaScript object for complex configuration:
@@ -208,12 +208,6 @@ To prevent unauthorized widget usage on non-merchant domains:
 2. **Backend Validation**: Widget page checks `Referer` header against allowed domains
 3. **Fallback**: If validation fails, display error message
 
-**Ad Blocker Compatibility**
-
-- **URL Naming**: Use generic, non-tracking-like paths to avoid ad blocker filters
-- **Detection**: Loader script includes fallback detection to display message if blocked
-- **Graceful Degradation**: If widget fails to load, show direct link to reservation page (or show some warning)
-
 **Preventing Spam**
 
 reCAPTCHA check on final step.
@@ -247,7 +241,7 @@ Enhance existing [reservation-mock](https://github.com/lightspeed-hospitality/re
 
 **Next.js Application** (includes both loader script and widget pages)
    - Loader script: `/public/widget-loader.js` (with caching configuration `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` (1 hour cache, serve stale for 24h on error))
-   - Widget page: `/reservation/[venueId]/widget`
+   - Widget page: `/reservation/[merchantId]/widget`
 
 **CI/CD Pipeline**
 
@@ -297,7 +291,7 @@ Loader script downloads widget JavaScript and add web component widget directly 
 ### Alternative 2: Iframe Pointing to Existing Reservation Page
 
 **Description:**
-Iframe points to the current reservation page (`/reservation/{venue-id}/reservation`) without modifications.
+Iframe points to the current reservation page (`/reservation/{merchant-id}/reservation`) without modifications.
 
 **Pros:**
 
@@ -345,9 +339,9 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 
 - Lazy-load widget iframe
 - Async script loading (non-blocking)
-- Performance: Widget small as possible, load time fast as possible even on 3G
+- Performance: Widget small as possible, load time fast as possible even on 3G (e.g. https://web.dev/articles/embed-best-practices)
 
-**2. Browser and Device Compatibility**
+**2. Browser and Device Compatibility** {#risks-browser-compatibility}
 
 **Risk:** Widget may not work correctly across different browsers, devices, or CMS platforms (WordPress, Shopify, Wix).
 
