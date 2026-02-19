@@ -4,7 +4,7 @@
 
 - Vladislav Khripkov, Andrei Kim
 
-**Created:** 2026-02-12
+**Created:** 2026-02-19
 
 **Status:** Draft
 
@@ -73,6 +73,27 @@ If needed, it is also possible to add versioning for the loader script. In this 
 - **Language**: TypeScript
 - **Target**: ES2015 (Compatible with 96%+ of global browsers).
 
+An implementation example for a loader script would look like this:
+
+```javascript
+(function(w,t,c,p,s,e){p=new Promise(function(r){w[c]={client:function(){if(!s){
+  s=document.createElement(t);s.src='https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js';s.async=1;s['data-merchant-id']='123';s.crossOrigin='anonymous'
+  e=document.getElementsByTagName(t)[0];e.parentNode.insertBefore(s,e);s.onload=function()
+  {r(w[c]);};}return p;}};});})(window,'script','LSReservationWidget');
+```
+
+It will create LSReservationWidget object, that will provide some API for merchant to interact with widget.
+
+```html
+<script>
+  const openButton = document.querySelector('.some-random-button');
+  openButton.addEventListener('click', async () => {
+    const lsReservationWidget = await LSReservationWidget.client();
+    lsReservationWidget.open();
+  });
+</script>
+```
+
 **Widget Technology Stack:**
 - The same as the existing reservation app.
 
@@ -94,7 +115,7 @@ sequenceDiagram
     participant M as Merchant Web Page
     participant L as Widget Loader Script
     participant I as Widget Iframe (embedded)
-    participant W as Reservation Website / Widget Page
+    participant W as Widget Page
     participant API as lsk-reservation-service API
 
     U->>B: Opens merchant page URL
@@ -159,19 +180,21 @@ Configuration follows a layered approach:
 
 **Examples:**
 
-Basic integration (all settings from backend):
+Basic integration (all settings from backend) + override with `data-*` attributes:
 
 ```html
 <script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchant-id="123" data-lang="fr"></script>
 ```
 
-Advanced: Using JavaScript object for complex configuration:
+Advanced: Using JavaScript object for complex configuration (like change widget position on screen):
 
 ```html
 <script>
-  window.lsk_reservations_widget = {
-    merchantId: 123,
-    lang: "fr",
+  LSReservationWidget.defaultPosition = {
+    top: 'auto',
+    left: 'auto',
+    right: '15px',
+    bottom: '15px',
   };
 </script>
 <script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js"></script>
@@ -217,6 +240,20 @@ reCAPTCHA check on final step.
 **Widget Usage Tracking**
 
 The widget should emit events (e.g., WIDGET_OPENED, BOOKING_COMPLETED) that the Loader Script catches and fires a callback function the merchant can hook into. This will allow merchants to collect some analytics (e.g. they could use Google Analytics and want to track booking on a website).
+
+```javascript
+LightspeedReservationWidget.on("WIDGET_OPENED", function () {
+  gtag("event", "widget_opened", { event_category: "reservations" });
+});
+
+LightspeedReservationWidget.on("BOOKING_COMPLETED", function (data) {
+  gtag("event", "booking_completed", {
+    event_category: "reservations",
+    party_size: data.partySize,
+    booking_date: data.date,
+  });
+});
+```
 
 **Key metrics for widget**:
 
