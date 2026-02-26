@@ -1,4 +1,4 @@
-# 80. Lightspeed Reservation Widget
+# 81. Lightspeed Reservation Widget
 
 **Owner(s):**
 
@@ -6,14 +6,14 @@
 
 **Created:** 2026-02-19
 
-**Status:** Draft
+**Status:** In Review
 
 ## What are you trying to solve?
 
 Guests want a simple way to book reservations directly from the merchant website without leaving the page. The current process involves redirecting to our reservation site (`lightspeed.app/reservation/{merchant-id}`), which creates several problems:
 
 - **High drop-off rates**: Users abandon the booking flow when redirected to external sites
-- **Fragmented user experience**: Breaking the merchant's website flow reduces conversion. It also increase time for booking flow
+- **Fragmented user experience**: Breaking the merchant's website flow reduces conversion. It also increases time for booking flow
 - **Competitive disadvantage**: Competitors like OpenTable, Resy, and SevenRooms offer embeddable widgets
 
 Currently, merchants are using third-party reservation services and their widgets. Now that we have launched Lightspeed Reservations, we should offer widget functionality. This would make it easier for merchants to switch to our reservation service. This proposal aims to provide an embeddable widget that keeps users on the merchant's website throughout the entire booking process.
@@ -29,12 +29,14 @@ We will develop a customizable, embeddable JavaScript widget that merchants can 
 - **Customization**: Merchants can configure widget appearance and behavior
 - **Responsive Design**: Works seamlessly on desktop and mobile devices
 
+![Initial design](assets/0081-widget-design.png)
+
 ### Technical Decisions
 
 Based on analysis of competitor solutions (OpenTable, Resy, SevenRooms, TheFork) and technical feasibility, we've chosen:
 
-- **Delivery Method**: loader script, that injects an iframe pointing to a new, widget-specific page
-- **Configuration**: Hybrid approach (backoffice defaults + `data-*` attributes overrides)
+- **Delivery Method**: Loader script, that injects an iframe pointing to a new, widget-specific page
+- **Configuration**: Customization via backoffice (+ special `data-*` attribute for identification of the merchant)
 - **Browser Support**: See [Browser and Device Compatibility](#risks-browser-compatibility) in Risks section
 
 ### Widget Delivery
@@ -43,7 +45,7 @@ Based on analysis of competitor solutions (OpenTable, Resy, SevenRooms, TheFork)
 
 The widget will be delivered in two parts:
 
-1. **Loader Script**: A lightweight JavaScript file that hosted in public folder of reservation application (e.g. https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js)
+1. **Loader Script**: A lightweight JavaScript file. Storing (+ versioning) and delivering on S3 and CloudFront
 2. **Widget Application**: An iframe pointing to a new, widget-specific page
 
 **Implementation:**
@@ -51,16 +53,20 @@ The widget will be delivered in two parts:
 Merchants will add a single async script tag to their website:
 
 ```html
-<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchant-id="123"></script>
+<script
+    async
+    src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js"
+    data-merchant-id="123"
+></script>
 ```
 
 The loader script will:
 
 1. Create an iframe pointing to `https://order-ahead.sbx.lsk.lightspeed.app/reservation/{merchant-id}/widget`
 2. Inject the iframe into the merchant's page
-3. Exposes an API for interacting with the iframe via postMessage. For example, customization elements or subscription to events inside the iframe (e.g. open/close widget state).
+3. Expose an API for interacting with the iframe via postMessage. For example, customization elements or subscription to events inside the iframe (e.g. open/close widget state).
 
-With the async/defer property, we would not interrupt the customer's website, as some of them care about website performance.
+With the async property, we would not interrupt the customer's website, as some of them care about website performance.
 
 Using `data-*` attributes on the script tag will help with caching (instead of using query params).
 
@@ -69,37 +75,57 @@ If needed, it is also possible to add versioning for the loader script. In this 
 ### Implementation Details
 
 **Loader Script Technology Stack:**
+
 - **Build Tool**: Vite (Library Mode)
 - **Language**: TypeScript
-- **Target**: ES2015 (Compatible with 96%+ of global browsers).
+- **Target**: ES2022 (Compatible with 94%+ of global browsers).
 
 An implementation example for a loader script would look like this:
 
 ```javascript
-(function(w,t,c,p,s,e){p=new Promise(function(r){w[c]={client:function(){if(!s){
-  s=document.createElement(t);s.src='https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js';s.async=1;s['data-merchant-id']='123';s.crossOrigin='anonymous'
-  e=document.getElementsByTagName(t)[0];e.parentNode.insertBefore(s,e);s.onload=function()
-  {r(w[c]);};}return p;}};});})(window,'script','LSReservationWidget');
+(function (w, t, c, p, s, e) {
+    p = new Promise(function (r) {
+        w[c] = {
+            client: function () {
+                if (!s) {
+                    s = document.createElement(t);
+                    s.src =
+                        "https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js";
+                    s.async = 1;
+                    s["data-merchant-id"] = "123";
+                    s.crossOrigin = "anonymous";
+                    e = document.getElementsByTagName(t)[0];
+                    e.parentNode.insertBefore(s, e);
+                    s.onload = function () {
+                        r(w[c]);
+                    };
+                }
+                return p;
+            },
+        };
+    });
+})(window, "script", "LSReservationWidget");
 ```
 
 It will create LSReservationWidget object, that will provide some API for merchant to interact with widget.
 
 ```html
 <script>
-  const openButton = document.querySelector('.some-random-button');
-  openButton.addEventListener('click', async () => {
-    const lsReservationWidget = await LSReservationWidget.client();
-    lsReservationWidget.open();
-  });
+    const openButton = document.querySelector(".some-random-button");
+    openButton.addEventListener("click", async () => {
+        const lsReservationWidget = await LSReservationWidget.client();
+        lsReservationWidget.open();
+    });
 </script>
 ```
 
 **Widget Technology Stack:**
+
 - The same as the existing reservation app.
 
 **Why Iframe Approach:**
 
-- **Security**: Better isolation between merchant site and widget (no XSS risks)
+- **Security**: Better isolation between merchant site and widget
 - **Faster Development**: Reuses existing reservation infrastructure
 - **Easier Maintenance**: Widget updates don't require merchant code changes, we release changes for reservation guest website and for widget at the same time
 - **Proven Pattern**: Used successfully by competitors (OpenTable, TheFork, Zenchef)
@@ -114,6 +140,7 @@ sequenceDiagram
     participant B as Browser
     participant M as Merchant Web Page
     participant L as Widget Loader Script
+    participant CDN as CDN (CloudFront + S3)
     participant I as Widget Iframe (embedded)
     participant W as Widget Page
     participant API as lsk-reservation-service API
@@ -122,11 +149,11 @@ sequenceDiagram
     B->>M: GET Merchant Web Page
     M-->>B: HTML + <script src="...widget-loader.js">
 
-    B->>W: GET widget-loader.js
-    W-->>B: widget-loader.js
+    B->>CDN: GET widget-loader.js
+    CDN-->>B: widget-loader.js
     B->>L: Execute widget-loader.js (on merchant page)
 
-    L->>L: Read init params (data-*, window config)
+    L->>L: Read init params (data-merchant-id)
     L->>M: Inject <iframe src="...widget-host/page?...">
 
     Note over M,I: Iframe runs in isolated origin/context
@@ -161,59 +188,21 @@ sequenceDiagram
     Note over U,I: User interacts with widget inside iframe
 ```
 
-### Configuration
+### Configuration and customization
 
-**Chosen Approach: Hybrid Configuration (Backend Defaults + `data-*` attributes overrides)**
+**Chosen Approach: Configuration via backoffice**
 
-Configuration follows a layered approach:
+We will create additional page inside LS Reservation add-on, where merchant could configure and customize our widget.
 
-1. **Backend Configuration (Primary)**: Merchants configure default settings in Backoffice
-   - Theme colors and branding
-   - Business hours and booking rules
-   - Default party size options
-   - Custom messaging and terms
+On initial version we would support only small customization:
+- Position of the widget (???)
+- Default state of the widget (open/closed)
+- Default language of the widget
 
-2. **`data-*` attributes**: Merchants can override specific settings per page
-   - `merchant-id` (required): Identifies the merchant merchant
-   - `lang` (optional): Default language for widget
-   - `other`
-
-**Examples:**
-
-Basic integration (all settings from backend) + override with `data-*` attributes:
-
-```html
-<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js" data-merchant-id="123" data-lang="fr"></script>
-```
-
-Advanced: Using JavaScript object for complex configuration (like change widget position on screen):
-
-```html
-<script>
-  LSReservationWidget.defaultPosition = {
-    top: 'auto',
-    left: 'auto',
-    right: '15px',
-    bottom: '15px',
-  };
-</script>
-<script async src="https://order-ahead.sbx.lsk.lightspeed.app/reservation/widget-loader.js"></script>
-```
-
-**Why Hybrid Approach:**
-
-- **Easy for most merchants**: Just copy-paste script tag, all settings managed in Backoffice
-- **Flexible for advanced use cases**: Can override per page (e.g., special events page)
-- **Best of both worlds**: Combines simplicity of backend config with power of `data-*` attributes.
-
-### Configuration Resolution Flow
-
-**Configuration Priority (Highest to Lowest):**
-
-1. **Data Attributes** - Overrides everything (e.g., `data-lang="fr"`)
-2. **JavaScript Window Object** - Custom configuration via `window.lsk_reservations_widget`
-3. **Backoffice Settings** - Default configuration set by merchant
-4. **System Defaults** - Fallback if nothing specified
+The whole configuration consists of two parts:
+1. **Backend Configuration (Primary)**: Merchants configure settings in Backoffice
+2. **`data-*` attributes**:
+    - `merchant-id` (required): Identifies the merchant
 
 ### Access Control and Licensing
 
@@ -231,27 +220,31 @@ To prevent unauthorized widget usage on non-merchant domains:
 2. **Backend Validation**: Widget page checks `Referer` header against allowed domains
 3. **Fallback**: If validation fails, display error message
 
+Note: The `Referer` header can be absent or spoofed in some environments. For additional protection at the browser level, see [Ad Blocker and CSP risks](#risks-adblocker-csp) where `Content-Security-Policy: frame-ancestors` is discussed.
+
 **Preventing Spam**
 
-reCAPTCHA check on final step.
+We are considering using [Cloudflare Turnstile](https://www.cloudflare.com/application-services/products/turnstile/) as alternative to reCAPTCHA to prevent abusing reservation booking. As an alternative path we would provide consent message inside widget to inform guests (if we stay on Google's reCAPTCHA).
 
 ### Analytics
 
 **Widget Usage Tracking**
 
-The widget should emit events (e.g., WIDGET_OPENED, BOOKING_COMPLETED) that the Loader Script catches and fires a callback function the merchant can hook into. This will allow merchants to collect some analytics (e.g. they could use Google Analytics and want to track booking on a website).
+We do not track anything on the frontend. However, some merchants may want to receive events for certain actions (e.g., WIDGET_OPENED, BOOKING_COMPLETED). We could emit such events without storing any data and suggest that merchants handle them with their own analytics solution in the provided callback. In this case, it is the client's responsibility to obtain GDPR consent, and we should inform merchants of this in the widget settings.
 
 ```javascript
-LightspeedReservationWidget.on("WIDGET_OPENED", function () {
-  gtag("event", "widget_opened", { event_category: "reservations" });
+const lsReservationWidget = await LSReservationWidget.client();
+
+lsReservationWidget.on("WIDGET_OPENED", function () {
+    gtag("event", "widget_opened", { event_category: "reservations" });
 });
 
-LightspeedReservationWidget.on("BOOKING_COMPLETED", function (data) {
-  gtag("event", "booking_completed", {
-    event_category: "reservations",
-    party_size: data.partySize,
-    booking_date: data.date,
-  });
+lsReservationWidget.on("BOOKING_COMPLETED", function (data) {
+    gtag("event", "booking_completed", {
+        event_category: "reservations",
+        party_size: data.partySize,
+        booking_date: data.date,
+    });
 });
 ```
 
@@ -266,7 +259,24 @@ LightspeedReservationWidget.on("BOOKING_COMPLETED", function (data) {
 
 Content inside an iframe is generally not indexed as part of the parent page. While the form itself doesn't need to be indexed, the metadata does.
 
-The Loader Script should arguably inject [JSON-LD Schema markup](https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data) (RestaurantReservation schema) into the merchant's <head>. This might give the merchant a SEO benefit and adds value to the widget.
+As an option, the Loader Script could inject [JSON-LD Schema markup](https://developers.google.com/search/docs/appearance/structured-data/intro-structured-data) (RestaurantReservation schema) into the merchant's <head>. This must not happen automatically. Schema injection should only occur with the merchant’s explicit consent, as they may already implement their own structured data. Duplicated or conflicting schema markup could negatively impact their SEO.
+
+### Accessibility
+
+The widget must be accessible to users who rely on assistive technologies or keyboard-only navigation. Responsibility is split between the loader script and the widget application:
+
+**Loader Script (parent page):**
+
+- Sets a descriptive `title` attribute on the injected `<iframe>` element (e.g. `title="Reservation booking"`) so screen readers can announce its purpose
+- When the widget opens, moves focus to the `<iframe>` element
+- When the widget closes (via `postMessage` from the iframe), returns focus to the merchant's trigger button (if possible)
+
+**Widget Application (inside iframe):**
+
+- All interactive elements (form fields, buttons, date pickers) are reachable via keyboard
+- Multi-step form transitions and error messages are announced to screen readers
+
+**Cross-origin limitation:** Because the widget page is served from our domain and embedded on merchant domains, the loader script cannot programmatically control focus _inside_ the iframe (blocked by browser security policy). Focus trapping for the open/modal state must be implemented within the widget application's own JavaScript.
 
 ### Testing
 
@@ -276,24 +286,33 @@ Enhance existing [reservation-mock](https://github.com/lightspeed-hospitality/re
 
 **Artifacts**
 
-**Next.js Application** (includes both loader script and widget pages)
-   - Loader script: `/public/widget-loader.js` (with caching configuration `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` (1 hour cache, serve stale for 24h on error))
-   - Widget page: `/reservation/[merchantId]/widget`
+- Widget page: `/reservation/[merchantId]/widget`
+- Loader script: `widget-loader.js` (with caching configuration `Cache-Control: public, max-age=3600, stale-while-revalidate=86400` (1 hour cache, serve stale for 24h on error))
 
 **CI/CD Pipeline**
 
-Nothing should change
+**1. Widget Page (Next.js App)**
+Standard pipeline — no changes required.
+
+**2. Loader Script (Static Asset)**
+Additional pipeline steps for the loader script:
+- Vite builds `widget-loader.js`
+- Unit tests + bundle size check
+- Upload to S3 bucket
+- CloudFront cache invalidation
 
 **Rollback Strategy**
-
-Standard Kubernetes rollback via ArgoCD (revert to previous image)
-
+**1. Widget Page**
+- Standard Kubernetes rollback via ArgoCD
+**2. Loader Script**
+- Restore previous version of script with S3
+- Invalidate CloudFront cache
 
 ## Dependencies
 
 **Internal Systems:**
 
-- **lsk-reservation-service** ([RFC 0070](https://github.com/lightspeed-hospitality/tech-docs/blob/main/docs/Decision-Records/RFC/0070-lsk-reservation-service.md)): Primary backend for availability checks and booking creation
+- **lsk-reservation-service** ([RFC 0070](0070-lsk-reservation-service.md)): Primary backend for availability checks and booking creation
 
 - **hospitality-consumer-facing/lsk-reservation-client**: Widget-specific pages served from existing reservation frontend
 
@@ -361,7 +380,6 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 - **Customer Support**: Trained on widget installation troubleshooting
 - **Marketing and Sales Team**: Create merchant communication materials
 
-
 ## Risks
 
 ### Technical Risks
@@ -389,18 +407,17 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 - Browser support: Modern browsers (Chrome, Firefox, Safari, Edge - last 2 versions)
 - Extensive QA across devices and browsers during beta phase
 
-**3. Ad Blocker (or other extensions) Interference**
+**3. Ad Blocker (or other extensions) Interference** {#risks-adblocker-csp}
 
-**Risk:** Ad blockers may prevent widget from loading (blocking tracking scripts) or even rendering.
+**Risk:** Ad blockers may prevent widget from loading (blocking tracking scripts) or even rendering. Also widget rendering could be blocked by CSP restrictions. More info about CSP adoption in Web Almanac's [Security Report](https://almanac.httparchive.org/en/2025/security)
 
 **Impact:** Medium - Reduced functionality for users with ad blockers
 
 **Mitigation:**
 
-- Use generic, non-tracking-like file names (e.g. `widget-loader.js`, see more examples on [easylist](https://github.com/easylist/easylist). It is used in a number of extensions and browsers such as Adblock Plus, uBlock Origin, AdBlock, AdGuard, Brave, Opera, and Vivaldi) 
-- Detection script displays message (e.g. "Please disable ad blocker to book reservation")
+- Use generic, non-tracking-like file names (e.g. `widget-loader.js`, see more examples on [easylist](https://github.com/easylist/easylist). It is used in a number of extensions and browsers such as Adblock Plus, uBlock Origin, AdBlock, AdGuard, Brave, Opera, and Vivaldi)
 - Fallback to direct reservation link
-- Monitor blocked load rate in analytics
+- In the troubleshooting section of the installation guide or FAQ, write about CSP.
 
 ### Security and Privacy Risks
 
@@ -413,7 +430,6 @@ The team responsible for reservations will own and maintain the widget. Note: Th
 **Mitigation:**
 
 - HTTPS only for all widget traffic
-- Strict CORS policies (allowed domains only)
 - Security review by Security Team before launch
 - GDPR/CCPA compliance review
 
